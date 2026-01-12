@@ -1,0 +1,19 @@
+{
+  "id": "tapescam",
+  "name": "Tape Scam",
+  "version": "0.1.0",
+  "description": "Tape saturation and degradation effect",
+  "author": "Charles Vestal",
+  "dsp": "tapescam.so",
+  "api_version": 1,
+  "capabilities": {
+    "chainable": true,
+    "component_type": "audio_fx",
+    "chain_params": [
+      {"key": "drive", "name": "Drive", "type": "float", "min": 0.0, "max": 1.0, "default": 0.3, "step": 0.05},
+      {"key": "saturation", "name": "Saturation", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05},
+      {"key": "wobble", "name": "Wobble", "type": "float", "min": 0.0, "max": 1.0, "default": 0.2, "step": 0.05},
+      {"key": "tone", "name": "Tone", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05}
+    ]
+  }
+}
