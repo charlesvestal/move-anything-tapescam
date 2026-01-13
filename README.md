@@ -2,12 +2,33 @@
 
 Tape saturation and degradation audio effect module for Move Anything.
 
+## Prerequisites
+
+- [Move Anything](https://github.com/charlesvestal/move-anything) installed on your Ableton Move
+
+## Installation
+
+### Via Module Store (Recommended)
+
+1. Launch Move Anything on your Move
+2. Select **Module Store** from the main menu
+3. Navigate to **Audio FX** → **TAPESCAM**
+4. Select **Install**
+
+### Manual Installation
+
+```bash
+./scripts/install.sh
+```
+
 ## Features
 
-- **Drive**: Input gain (1x to 4x)
-- **Saturation**: Soft clipping via tanh waveshaping
-- **Wobble**: LFO-modulated pitch variation (wow/flutter)
-- **Tone**: Low-pass filter (2kHz to 20kHz)
+- **Input**: Input level (pre-gain)
+- **Drive**: Distortion/clipping amount
+- **Color**: Saturation character (affects both drive stage and tape saturation)
+- **Wobble**: Wow/flutter amount (tape pitch modulation)
+- **Tone**: Tilt EQ (dark to bright)
+- **Output**: Output level
 
 ## Building
 
