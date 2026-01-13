@@ -29,7 +29,9 @@ This is an audio effect module for use within Signal Chain. Add it after a sound
 
 ## Credits
 
-Original implementation inspired by analog tape saturation characteristics.
+Ported from [CVCHothouse](https://github.com/charlesvestal/CVCHothouse) (Daisy Seed effects pedal collection).
+
+Inspired by analog tape saturation characteristics.
 
 ## License
 
