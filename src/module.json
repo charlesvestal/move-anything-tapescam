@@ -10,10 +10,12 @@
     "chainable": true,
     "component_type": "audio_fx",
     "chain_params": [
-      {"key": "drive", "name": "Drive", "type": "float", "min": 0.0, "max": 1.0, "default": 0.3, "step": 0.05},
-      {"key": "saturation", "name": "Saturation", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05},
-      {"key": "wobble", "name": "Wobble", "type": "float", "min": 0.0, "max": 1.0, "default": 0.2, "step": 0.05},
-      {"key": "tone", "name": "Tone", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05}
+      {"key": "input", "name": "Input", "type": "float", "min": 0.0, "max": 1.0, "default": 0.7, "step": 0.05},
+      {"key": "drive", "name": "Drive", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.05},
+      {"key": "color", "name": "Color", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.05},
+      {"key": "wobble", "name": "Wobble", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.05},
+      {"key": "tone", "name": "Tone", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.05},
+      {"key": "output", "name": "Output", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 0.05}
     ]
   }
 }
