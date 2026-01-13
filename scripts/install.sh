@@ -19,6 +19,13 @@ echo "Copying module to Move..."
 ssh ableton@move.local "mkdir -p /data/UserData/move-anything/modules/chain/audio_fx/tapescam"
 scp -r dist/tapescam/* ableton@move.local:/data/UserData/move-anything/modules/chain/audio_fx/tapescam/
 
+# Install chain presets if they exist
+if [ -d "src/patches" ]; then
+    echo "Installing chain presets..."
+    ssh ableton@move.local "mkdir -p /data/UserData/move-anything/modules/chain/patches"
+    scp src/patches/*.json ableton@move.local:/data/UserData/move-anything/modules/chain/patches/
+fi
+
 echo ""
 echo "=== Install Complete ==="
 echo "Module installed to: /data/UserData/move-anything/modules/chain/audio_fx/tapescam/"
