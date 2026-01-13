@@ -1,4 +1,4 @@
-# Move Anything Tape Scam
+# Move Anything TAPESCAM
 
 Tape saturation and degradation audio effect module for Move Anything.
 

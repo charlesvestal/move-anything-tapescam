@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install Tape Scam module to Move
+# Install TAPESCAM module to Move
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ if [ ! -d "dist/tapescam" ]; then
     exit 1
 fi
 
-echo "=== Installing Tape Scam Module ==="
+echo "=== Installing TAPESCAM Module ==="
 
 # Deploy to Move (audio_fx path)
 echo "Copying module to Move..."

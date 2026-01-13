@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Tape Scam module for Move Anything (ARM64)
+# Build TAPESCAM module for Move Anything (ARM64)
 #
 # Automatically uses Docker for cross-compilation if needed.
 # Set CROSS_PREFIX to skip Docker (e.g., for native ARM builds).
@@ -11,7 +11,7 @@ IMAGE_NAME="move-anything-builder"
 
 # Check if we need Docker
 if [ -z "$CROSS_PREFIX" ] && [ ! -f "/.dockerenv" ]; then
-    echo "=== Tape Scam Module Build (via Docker) ==="
+    echo "=== TAPESCAM Module Build (via Docker) ==="
     echo ""
 
     # Build Docker image if needed
@@ -40,7 +40,7 @@ CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
 
 cd "$REPO_ROOT"
 
-echo "=== Building Tape Scam Module ==="
+echo "=== Building TAPESCAM Module ==="
 echo "Cross prefix: $CROSS_PREFIX"
 
 # Create build directories
