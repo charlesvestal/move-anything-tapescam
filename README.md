@@ -27,6 +27,10 @@ The module will be installed to `/data/UserData/move-anything/modules/chain/audi
 
 This is an audio effect module for use within Signal Chain. Add it after a sound generator in your chain preset.
 
+## Credits
+
+Original implementation inspired by analog tape saturation characteristics.
+
 ## License
 
 MIT License - see LICENSE file for details.
