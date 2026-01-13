@@ -1,5 +1,5 @@
 /*
- * Tape Scam Audio FX Plugin
+ * TAPESCAM Audio FX Plugin
  *
  * Tape saturation and degradation effect with:
  * - Drive: Input gain
@@ -82,7 +82,7 @@ static inline float delay_read(float *delay, int idx, float frac_delay) {
 
 static int fx_on_load(const char *module_dir, const char *config_json) {
     char msg[256];
-    snprintf(msg, sizeof(msg), "Tape Scam loading from: %s", module_dir);
+    snprintf(msg, sizeof(msg), "TAPESCAM loading from: %s", module_dir);
     fx_log(msg);
 
     /* Clear delay lines */
@@ -98,12 +98,12 @@ static int fx_on_load(const char *module_dir, const char *config_json) {
     g_filter_l = 0.0f;
     g_filter_r = 0.0f;
 
-    fx_log("Tape Scam initialized");
+    fx_log("TAPESCAM initialized");
     return 0;
 }
 
 static void fx_on_unload(void) {
-    fx_log("Tape Scam unloading");
+    fx_log("TAPESCAM unloading");
 }
 
 static void fx_process_block(int16_t *audio_inout, int frames) {
@@ -222,7 +222,7 @@ static int fx_get_param(const char *key, char *buf, int buf_len) {
     } else if (strcmp(key, "tone") == 0) {
         return snprintf(buf, buf_len, "%.2f", g_tone);
     } else if (strcmp(key, "name") == 0) {
-        return snprintf(buf, buf_len, "Tape Scam");
+        return snprintf(buf, buf_len, "TAPESCAM");
     }
     return -1;
 }
@@ -240,7 +240,7 @@ audio_fx_api_v1_t* move_audio_fx_init_v1(const host_api_v1_t *host) {
     g_fx_api.set_param = fx_set_param;
     g_fx_api.get_param = fx_get_param;
 
-    fx_log("Tape Scam plugin initialized");
+    fx_log("TAPESCAM plugin initialized");
 
     return &g_fx_api;
 }

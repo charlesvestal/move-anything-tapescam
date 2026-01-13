@@ -4,7 +4,7 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-Tape Scam is an audio effect module for Move Anything that provides tape saturation and degradation effects.
+TAPESCAM is an audio effect module for Move Anything that provides tape saturation and degradation effects.
 
 ## Architecture
 
