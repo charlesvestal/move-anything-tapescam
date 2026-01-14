@@ -64,9 +64,15 @@ cat src/module.json > dist/tapescam/module.json
 cat build/tapescam.so > dist/tapescam/tapescam.so
 chmod +x dist/tapescam/tapescam.so
 
+# Create tarball for release
+cd dist
+tar -czvf tapescam-module.tar.gz tapescam/
+cd ..
+
 echo ""
 echo "=== Build Complete ==="
 echo "Output: dist/tapescam/"
+echo "Tarball: dist/tapescam-module.tar.gz"
 echo ""
 echo "To install on Move:"
 echo "  ./scripts/install.sh"
