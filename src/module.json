@@ -1,11 +1,11 @@
 {
   "id": "tapescam",
   "name": "TAPESCAM",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tape saturation and degradation effect",
   "author": "Charles Vestal",
   "dsp": "tapescam.so",
-  "api_version": 1,
+  "api_version": 2,
   "capabilities": {
     "chainable": true,
     "component_type": "audio_fx",
