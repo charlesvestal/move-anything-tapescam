@@ -721,6 +721,45 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "tone") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_tone);
     if (strcmp(key, "output") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_output);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
+
+    /* UI hierarchy for shadow parameter editor */
+    if (strcmp(key, "ui_hierarchy") == 0) {
+        const char *hierarchy = "{"
+            "\"modes\":null,"
+            "\"levels\":{"
+                "\"root\":{"
+                    "\"children\":null,"
+                    "\"knobs\":[\"input\",\"drive\",\"color\",\"wobble\",\"tone\",\"output\"],"
+                    "\"params\":[\"input\",\"drive\",\"color\",\"wobble\",\"tone\",\"output\"]"
+                "}"
+            "}"
+        "}";
+        int len = strlen(hierarchy);
+        if (len < buf_len) {
+            strcpy(buf, hierarchy);
+            return len;
+        }
+        return -1;
+    }
+
+    /* Chain params metadata for shadow parameter editor */
+    if (strcmp(key, "chain_params") == 0) {
+        const char *params_json = "["
+            "{\"key\":\"input\",\"name\":\"Input\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"drive\",\"name\":\"Drive\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"color\",\"name\":\"Color\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"wobble\",\"name\":\"Wobble\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1}"
+        "]";
+        int len = strlen(params_json);
+        if (len < buf_len) {
+            strcpy(buf, params_json);
+            return len;
+        }
+        return -1;
+    }
+
     return -1;
 }
 
