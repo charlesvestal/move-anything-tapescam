@@ -1,6 +1,7 @@
 {
   "id": "tapescam",
   "name": "TAPESCAM",
+  "abbrev": "TS",
   "version": "0.2.1",
   "description": "Tape saturation and degradation effect",
   "author": "Charles Vestal",
