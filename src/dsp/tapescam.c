@@ -860,7 +860,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     }
 
     /* Set default parameters */
-    inst->param_input = 0.7f;
+    inst->param_input = 1.0f;
     inst->param_drive = 0.0f;
     inst->param_color = 0.0f;
     inst->param_wobble = 0.0f;
@@ -993,14 +993,23 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         inst->param_noise = v;
         v2_Hiss_SetAmount(inst, v);
     } else if (strcmp(key, "compression") == 0) {
-        inst->param_compression = (int)(v * 2.0f + 0.5f);
+        if (strcmp(val, "OFF") == 0) inst->param_compression = 0;
+        else if (strcmp(val, "LITE") == 0) inst->param_compression = 1;
+        else if (strcmp(val, "HEAVY") == 0) inst->param_compression = 2;
+        else inst->param_compression = (int)(v * 2.0f + 0.5f);
         v2_Comp_SetMode(inst, inst->param_compression, SAMPLE_RATE);
     } else if (strcmp(key, "age") == 0) {
-        inst->param_age = (int)(v * 2.0f + 0.5f);
+        if (strcmp(val, "NEW") == 0) inst->param_age = 0;
+        else if (strcmp(val, "USED") == 0) inst->param_age = 1;
+        else if (strcmp(val, "WORN") == 0) inst->param_age = 2;
+        else inst->param_age = (int)(v * 2.0f + 0.5f);
         v2_ApplyAgeSpeedModifiers(inst);
         v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     } else if (strcmp(key, "speed") == 0) {
-        inst->param_speed = (int)(v * 2.0f + 0.5f);
+        if (strcmp(val, "HIGH") == 0) inst->param_speed = 0;
+        else if (strcmp(val, "STD") == 0) inst->param_speed = 1;
+        else if (strcmp(val, "LOW") == 0) inst->param_speed = 2;
+        else inst->param_speed = (int)(v * 2.0f + 0.5f);
         v2_ApplyAgeSpeedModifiers(inst);
         v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     } else if (strcmp(key, "widen") == 0) {
@@ -1019,9 +1028,24 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "tone") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_tone);
     if (strcmp(key, "output") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_output);
     if (strcmp(key, "noise") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_noise);
-    if (strcmp(key, "compression") == 0) return snprintf(buf, buf_len, "%d", inst->param_compression);
-    if (strcmp(key, "age") == 0) return snprintf(buf, buf_len, "%d", inst->param_age);
-    if (strcmp(key, "speed") == 0) return snprintf(buf, buf_len, "%d", inst->param_speed);
+    if (strcmp(key, "compression") == 0) {
+        const char *options[] = {"OFF", "LITE", "HEAVY"};
+        int idx = inst->param_compression;
+        if (idx < 0) idx = 0; if (idx > 2) idx = 2;
+        return snprintf(buf, buf_len, "%s", options[idx]);
+    }
+    if (strcmp(key, "age") == 0) {
+        const char *options[] = {"NEW", "USED", "WORN"};
+        int idx = inst->param_age;
+        if (idx < 0) idx = 0; if (idx > 2) idx = 2;
+        return snprintf(buf, buf_len, "%s", options[idx]);
+    }
+    if (strcmp(key, "speed") == 0) {
+        const char *options[] = {"HIGH", "STD", "LOW"};
+        int idx = inst->param_speed;
+        if (idx < 0) idx = 0; if (idx > 2) idx = 2;
+        return snprintf(buf, buf_len, "%s", options[idx]);
+    }
     if (strcmp(key, "widen") == 0) return snprintf(buf, buf_len, "%d", inst->param_widen);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
 
@@ -1031,14 +1055,9 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "\"modes\":null,"
             "\"levels\":{"
                 "\"root\":{"
-                    "\"children\":[\"settings\"],"
-                    "\"knobs\":[\"input\",\"drive\",\"color\",\"wobble\",\"noise\",\"tone\"],"
-                    "\"params\":[\"input\",\"drive\",\"color\",\"wobble\",\"noise\",\"tone\",\"output\"]"
-                "},"
-                "\"settings\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"age\",\"speed\",\"compression\",\"widen\"],"
-                    "\"params\":[\"age\",\"speed\",\"compression\",\"widen\"]"
+                    "\"knobs\":[\"drive\",\"color\",\"wobble\",\"noise\",\"tone\",\"output\",\"age\",\"compression\"],"
+                    "\"params\":[\"input\",\"drive\",\"color\",\"wobble\",\"noise\",\"tone\",\"output\",\"age\",\"speed\",\"compression\",\"widen\"]"
                 "}"
             "}"
         "}";
@@ -1060,9 +1079,9 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"noise\",\"name\":\"Noise\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"age\",\"name\":\"Age\",\"type\":\"enum\",\"options\":[\"New\",\"Used\",\"Worn\"]},"
-            "{\"key\":\"speed\",\"name\":\"Speed\",\"type\":\"enum\",\"options\":[\"High\",\"Standard\",\"Low\"]},"
-            "{\"key\":\"compression\",\"name\":\"Compression\",\"type\":\"enum\",\"options\":[\"Off\",\"Lite\",\"Heavy\"]},"
+            "{\"key\":\"age\",\"name\":\"Age\",\"type\":\"enum\",\"options\":[\"NEW\",\"USED\",\"WORN\"]},"
+            "{\"key\":\"speed\",\"name\":\"Speed\",\"type\":\"enum\",\"options\":[\"HIGH\",\"STD\",\"LOW\"]},"
+            "{\"key\":\"compression\",\"name\":\"Compression\",\"type\":\"enum\",\"options\":[\"OFF\",\"LITE\",\"HEAVY\"]},"
             "{\"key\":\"widen\",\"name\":\"Widen\",\"type\":\"bool\"}"
         "]";
         int len = strlen(params_json);
