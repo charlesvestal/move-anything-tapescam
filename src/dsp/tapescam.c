@@ -832,6 +832,20 @@ static void v2_ApplyAgeSpeedModifiers(tapescam_instance_t *inst) {
     inst->mod_flutterDepthScale = ageFlutterScale * flutterDepthScale;
 }
 
+static void v2_Width_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
+    if (!inst->param_widen) return;  /* Skip if widen is off */
+
+    const float width = 1.35f;  /* Default widen amount from VST */
+
+    for (int i = 0; i < size; i++) {
+        float mid = 0.5f * (left[i] + right[i]);
+        float side = 0.5f * (left[i] - right[i]);
+        side *= width;
+        left[i] = mid + side;
+        right[i] = mid - side;
+    }
+}
+
 static void* v2_create_instance(const char *module_dir, const char *config_json) {
     v2_log("Creating instance");
 
@@ -933,6 +947,7 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         v2_Tone_Process(inst, left_buf, right_buf, chunk);
         v2_Hiss_Process(inst, left_buf, right_buf, chunk);
         v2_Comp_Process(inst, left_buf, right_buf, chunk);
+        v2_Width_Process(inst, left_buf, right_buf, chunk);
 
         /* Apply post-chain output level, then soft clip and convert back */
         for (int i = 0; i < chunk; i++) {
@@ -988,6 +1003,8 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         inst->param_speed = (int)(v * 2.0f + 0.5f);
         v2_ApplyAgeSpeedModifiers(inst);
         v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
+    } else if (strcmp(key, "widen") == 0) {
+        inst->param_widen = (v > 0.5f) ? 1 : 0;
     }
 }
 
@@ -1005,6 +1022,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "compression") == 0) return snprintf(buf, buf_len, "%d", inst->param_compression);
     if (strcmp(key, "age") == 0) return snprintf(buf, buf_len, "%d", inst->param_age);
     if (strcmp(key, "speed") == 0) return snprintf(buf, buf_len, "%d", inst->param_speed);
+    if (strcmp(key, "widen") == 0) return snprintf(buf, buf_len, "%d", inst->param_widen);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
 
     /* UI hierarchy for shadow parameter editor */
