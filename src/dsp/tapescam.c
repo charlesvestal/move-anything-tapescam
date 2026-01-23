@@ -291,6 +291,12 @@ typedef struct {
     float comp_ratio;
     float comp_makeupGain;
     float comp_maxBoost;
+
+    /* Age/Speed modifiers */
+    float gs_headroomAdjDb;
+    float mod_saturationMul;
+    float mod_wowDepthScale;
+    float mod_flutterDepthScale;
 } tapescam_instance_t;
 
 static void v2_log(const char *msg) {
@@ -339,8 +345,8 @@ static void v2_GS_SetParams(tapescam_instance_t *inst, float drive, float color)
     float trimDb = -2.0f + driveShaped * 34.0f;
     float channelDb = -2.0f + driveNorm * 26.0f;
 
-    inst->gs_trimGainLin = dBToLin(trimDb);
-    inst->gs_channelGainLin = dBToLin(channelDb);
+    inst->gs_trimGainLin = dBToLin(trimDb + inst->gs_headroomAdjDb);
+    inst->gs_channelGainLin = dBToLin(channelDb + inst->gs_headroomAdjDb);
     inst->gs_driveNorm = driveNorm;
     inst->gs_character = colorNorm;
     inst->gs_characterDriveScale = 0.8f + 1.2f * colorNorm;
@@ -355,6 +361,10 @@ static void v2_GS_SetOutputLevel(tapescam_instance_t *inst, float level) {
     inst->param_outputLevelLin = dBToLin(levelDb);
     /* GainStage now runs at unity */
     inst->gs_masterVolLin = 1.0f;
+}
+
+static void v2_GS_AdjustHeadroom(tapescam_instance_t *inst, float headroomDb) {
+    inst->gs_headroomAdjDb = Clamp(headroomDb, -12.0f, 6.0f);
 }
 
 static float v2_GS_ApplyClipping(tapescam_instance_t *inst, float x, float softness) {
@@ -408,7 +418,7 @@ static void v2_TapeSat_UpdateControls(tapescam_instance_t *inst) {
     if (fabsf(inst->sat_targetDrive - inst->sat_smoothedDrive) < 1e-4f) {
         inst->sat_smoothedDrive = inst->sat_targetDrive;
     }
-    inst->sat_factor = Clamp(inst->sat_smoothedDrive * 1.35f, 0.0f, 2.0f);
+    inst->sat_factor = Clamp(inst->sat_smoothedDrive * 1.35f * inst->mod_saturationMul, 0.0f, 2.0f);
 }
 
 static void v2_TapeSat_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
@@ -771,6 +781,57 @@ static void v2_Comp_Process(tapescam_instance_t *inst, float *left, float *right
     }
 }
 
+static void v2_ApplyAgeSpeedModifiers(tapescam_instance_t *inst) {
+    int age = inst->param_age;
+    int speed = inst->param_speed;
+
+    /* Age: 0=NEW, 1=USED, 2=WORN */
+    float ageNorm = Clamp(age / 2.0f, 0.0f, 1.0f);
+
+    /* Headroom: worn tape has less headroom */
+    float ageHeadroomDb = (ageNorm - 0.5f) * 1.5f;
+
+    /* Speed: 0=HIGH (clean), 1=STD, 2=LOW (lo-fi) */
+    float speedHeadroomDb = 0.0f;
+    float speedSatMul = 1.0f;
+    float wowDepthScale = 1.0f;
+    float flutterDepthScale = 1.0f;
+
+    switch (speed) {
+        case 0:  /* HIGH */
+            speedHeadroomDb = 2.0f;
+            speedSatMul = 0.9f;
+            wowDepthScale = 0.85f;
+            flutterDepthScale = 0.85f;
+            break;
+        case 1:  /* STD */
+            speedHeadroomDb = -0.5f;
+            speedSatMul = 1.0f;
+            wowDepthScale = 1.3f;
+            flutterDepthScale = 1.0f;
+            break;
+        case 2:  /* LOW */
+            speedHeadroomDb = -2.0f;
+            speedSatMul = 1.25f;
+            wowDepthScale = 1.8f;
+            flutterDepthScale = 1.1f;
+            break;
+    }
+
+    /* Age modifiers */
+    float ageSatMul = 1.0f + 0.4f * ageNorm;
+    float ageWowScale = 1.0f + 1.6f * ageNorm;
+    float ageFlutterScale = 1.0f - 0.2f * ageNorm;
+
+    /* Apply combined headroom */
+    v2_GS_AdjustHeadroom(inst, ageHeadroomDb + speedHeadroomDb);
+
+    /* Store combined modifiers for use by other modules */
+    inst->mod_saturationMul = ageSatMul * speedSatMul;
+    inst->mod_wowDepthScale = ageWowScale * wowDepthScale;
+    inst->mod_flutterDepthScale = ageFlutterScale * flutterDepthScale;
+}
+
 static void* v2_create_instance(const char *module_dir, const char *config_json) {
     v2_log("Creating instance");
 
@@ -816,6 +877,12 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v2_Hiss_SetAmount(inst, inst->param_noise);
 
     v2_Comp_Init(inst, SAMPLE_RATE);
+
+    inst->gs_headroomAdjDb = 0.0f;
+    inst->mod_saturationMul = 1.0f;
+    inst->mod_wowDepthScale = 1.0f;
+    inst->mod_flutterDepthScale = 1.0f;
+    v2_ApplyAgeSpeedModifiers(inst);
 
     v2_log("Instance created");
     return inst;
@@ -913,6 +980,14 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     } else if (strcmp(key, "compression") == 0) {
         inst->param_compression = (int)(v * 2.0f + 0.5f);
         v2_Comp_SetMode(inst, inst->param_compression, SAMPLE_RATE);
+    } else if (strcmp(key, "age") == 0) {
+        inst->param_age = (int)(v * 2.0f + 0.5f);
+        v2_ApplyAgeSpeedModifiers(inst);
+        v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
+    } else if (strcmp(key, "speed") == 0) {
+        inst->param_speed = (int)(v * 2.0f + 0.5f);
+        v2_ApplyAgeSpeedModifiers(inst);
+        v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     }
 }
 
@@ -928,6 +1003,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "output") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_output);
     if (strcmp(key, "noise") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_noise);
     if (strcmp(key, "compression") == 0) return snprintf(buf, buf_len, "%d", inst->param_compression);
+    if (strcmp(key, "age") == 0) return snprintf(buf, buf_len, "%d", inst->param_age);
+    if (strcmp(key, "speed") == 0) return snprintf(buf, buf_len, "%d", inst->param_speed);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
 
     /* UI hierarchy for shadow parameter editor */
