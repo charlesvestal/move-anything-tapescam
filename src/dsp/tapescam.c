@@ -1031,9 +1031,14 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "\"modes\":null,"
             "\"levels\":{"
                 "\"root\":{"
+                    "\"children\":[\"settings\"],"
+                    "\"knobs\":[\"input\",\"drive\",\"color\",\"wobble\",\"noise\",\"tone\"],"
+                    "\"params\":[\"input\",\"drive\",\"color\",\"wobble\",\"noise\",\"tone\",\"output\"]"
+                "},"
+                "\"settings\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"input\",\"drive\",\"color\",\"wobble\",\"tone\",\"output\"],"
-                    "\"params\":[\"input\",\"drive\",\"color\",\"wobble\",\"tone\",\"output\"]"
+                    "\"knobs\":[\"age\",\"speed\",\"compression\",\"widen\"],"
+                    "\"params\":[\"age\",\"speed\",\"compression\",\"widen\"]"
                 "}"
             "}"
         "}";
@@ -1052,8 +1057,13 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"drive\",\"name\":\"Drive\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"color\",\"name\":\"Color\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"wobble\",\"name\":\"Wobble\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"noise\",\"name\":\"Noise\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1}"
+            "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1},"
+            "{\"key\":\"age\",\"name\":\"Age\",\"type\":\"enum\",\"options\":[\"New\",\"Used\",\"Worn\"]},"
+            "{\"key\":\"speed\",\"name\":\"Speed\",\"type\":\"enum\",\"options\":[\"High\",\"Standard\",\"Low\"]},"
+            "{\"key\":\"compression\",\"name\":\"Compression\",\"type\":\"enum\",\"options\":[\"Off\",\"Lite\",\"Heavy\"]},"
+            "{\"key\":\"widen\",\"name\":\"Widen\",\"type\":\"bool\"}"
         "]";
         int len = strlen(params_json);
         if (len < buf_len) {
