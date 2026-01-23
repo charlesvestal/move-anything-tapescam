@@ -207,6 +207,11 @@ typedef struct {
     float param_tone;
     float param_output;
     float param_outputLevelLin;  /* Computed linear output level */
+    float param_noise;           /* 0-1: tape hiss amount */
+    int param_age;               /* 0=NEW, 1=USED, 2=WORN */
+    int param_speed;             /* 0=HIGH, 1=STD, 2=LOW */
+    int param_compression;       /* 0=OFF, 1=LITE, 2=HEAVY */
+    int param_widen;             /* 0=OFF, 1=ON */
 
     /* GainStage state */
     float gs_trimGainLin;
@@ -612,6 +617,11 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     inst->param_tone = 0.5f;
     inst->param_output = 1.0f;
     inst->param_outputLevelLin = 1.0f;  /* Unity default */
+    inst->param_noise = 0.0f;
+    inst->param_age = 0;          /* NEW */
+    inst->param_speed = 0;        /* HIGH (cleanest) */
+    inst->param_compression = 0;  /* OFF */
+    inst->param_widen = 1;        /* ON by default */
     inst->randState = 0x1234567u;
 
     /* Initialize DSP modules */
