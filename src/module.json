@@ -5,6 +5,7 @@
   "version": "0.4.1",
   "description": "Tape saturation and degradation effect",
   "author": "Charles Vestal",
+  "license": "MIT",
   "dsp": "tapescam.so",
   "api_version": 2,
   "capabilities": {
