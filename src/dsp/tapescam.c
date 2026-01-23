@@ -206,6 +206,7 @@ typedef struct {
     float param_wobble;
     float param_tone;
     float param_output;
+    float param_outputLevelLin;  /* Computed linear output level */
 
     /* GainStage state */
     float gs_trimGainLin;
@@ -324,8 +325,11 @@ static void v2_GS_SetParams(tapescam_instance_t *inst, float drive, float color)
 }
 
 static void v2_GS_SetOutputLevel(tapescam_instance_t *inst, float level) {
+    /* Store for post-chain application - range: -12dB to +6dB */
     float levelDb = -12.0f + level * 18.0f;
-    inst->gs_masterVolLin = dBToLin(levelDb);
+    inst->param_outputLevelLin = dBToLin(levelDb);
+    /* GainStage now runs at unity */
+    inst->gs_masterVolLin = 1.0f;
 }
 
 static float v2_GS_ApplyClipping(tapescam_instance_t *inst, float x, float softness) {
@@ -607,6 +611,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     inst->param_wobble = 0.0f;
     inst->param_tone = 0.5f;
     inst->param_output = 1.0f;
+    inst->param_outputLevelLin = 1.0f;  /* Unity default */
     inst->randState = 0x1234567u;
 
     /* Initialize DSP modules */
@@ -669,10 +674,12 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         v2_WF_Process(inst, left_buf, right_buf, left_buf, right_buf, chunk, SAMPLE_RATE);
         v2_Tone_Process(inst, left_buf, right_buf, chunk);
 
-        /* Final soft clip and convert back */
+        /* Apply post-chain output level, then soft clip and convert back */
         for (int i = 0; i < chunk; i++) {
-            float out_l = tanhf(left_buf[i] * 0.95f);
-            float out_r = tanhf(right_buf[i] * 0.95f);
+            float out_l = left_buf[i] * inst->param_outputLevelLin;
+            float out_r = right_buf[i] * inst->param_outputLevelLin;
+            out_l = tanhf(out_l * 0.95f);
+            out_r = tanhf(out_r * 0.95f);
             audio_inout[(offset + i) * 2] = (int16_t)(Clamp(out_l, -1.0f, 1.0f) * 32767.0f);
             audio_inout[(offset + i) * 2 + 1] = (int16_t)(Clamp(out_r, -1.0f, 1.0f) * 32767.0f);
         }
