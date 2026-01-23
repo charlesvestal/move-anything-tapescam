@@ -271,6 +271,13 @@ typedef struct {
     float tone_smoothedAmount;
     float tone_bassGainDb;
     float tone_trebleGainDb;
+
+    /* HissDrop state */
+    float hiss_targetAmount;
+    float hiss_smoothedAmount;
+    float hiss_levelLin;
+    float hiss_noiseColorFactor;
+    float hiss_pinkState[2][7];  /* 7 pink noise state vars per channel */
 } tapescam_instance_t;
 
 static void v2_log(const char *msg) {
@@ -596,6 +603,70 @@ static void v2_Tone_Process(tapescam_instance_t *inst, float *bufL, float *bufR,
     }
 }
 
+static void v2_Hiss_Init(tapescam_instance_t *inst) {
+    inst->hiss_targetAmount = 0.0f;
+    inst->hiss_smoothedAmount = 0.0f;
+    inst->hiss_levelLin = 0.0f;
+    inst->hiss_noiseColorFactor = 0.0f;
+    memset(inst->hiss_pinkState, 0, sizeof(inst->hiss_pinkState));
+}
+
+static void v2_Hiss_SetAmount(tapescam_instance_t *inst, float amount) {
+    inst->hiss_targetAmount = Clamp(amount, 0.0f, 1.0f);
+}
+
+static void v2_Hiss_UpdateControls(tapescam_instance_t *inst) {
+    float delta = inst->hiss_targetAmount - inst->hiss_smoothedAmount;
+    inst->hiss_smoothedAmount += delta * 0.5f;
+
+    float amt = inst->hiss_smoothedAmount;
+    if (amt < 0.0005f) {
+        inst->hiss_levelLin = 0.0f;
+        inst->hiss_noiseColorFactor = 0.0f;
+        return;
+    }
+
+    /* Map 0-1 to -60dB to -6dB */
+    float hissDb = -60.0f + amt * 54.0f;
+    inst->hiss_levelLin = dBToLin(hissDb);
+    inst->hiss_noiseColorFactor = amt;
+}
+
+static float v2_Hiss_ProcessPink(tapescam_instance_t *inst, int ch, float white) {
+    float *s = inst->hiss_pinkState[ch];
+    s[0] = 0.99886f * s[0] + white * 0.0555179f;
+    s[1] = 0.99332f * s[1] + white * 0.0750759f;
+    s[2] = 0.96900f * s[2] + white * 0.1538520f;
+    s[3] = 0.86650f * s[3] + white * 0.3104856f;
+    s[4] = 0.55000f * s[4] + white * 0.5329522f;
+    s[5] = -0.7616f * s[5] - white * 0.0168980f;
+    float pink = s[0] + s[1] + s[2] + s[3] + s[4] + s[5] + s[6] + white * 0.5362f;
+    s[6] = white * 0.115926f;
+    return pink * 0.11f;
+}
+
+static void v2_Hiss_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
+    if (inst->hiss_levelLin <= 0.0f) return;
+
+    float colorFactor = inst->hiss_noiseColorFactor;
+    float level = inst->hiss_levelLin;
+
+    for (int i = 0; i < size; i++) {
+        float whiteL = v2_WF_NextRandCentered(inst);
+        float whiteR = v2_WF_NextRandCentered(inst);
+
+        float noiseL = whiteL;
+        float noiseR = whiteR;
+        if (colorFactor >= 0.001f) {
+            noiseL = (1.0f - colorFactor) * whiteL + colorFactor * v2_Hiss_ProcessPink(inst, 0, whiteL);
+            noiseR = (1.0f - colorFactor) * whiteR + colorFactor * v2_Hiss_ProcessPink(inst, 1, whiteR);
+        }
+
+        left[i] += noiseL * level;
+        right[i] += noiseR * level;
+    }
+}
+
 static void* v2_create_instance(const char *module_dir, const char *config_json) {
     v2_log("Creating instance");
 
@@ -637,6 +708,9 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v2_Tone_Init(inst);
     v2_Tone_SetAmount(inst, inst->param_tone);
 
+    v2_Hiss_Init(inst);
+    v2_Hiss_SetAmount(inst, inst->param_noise);
+
     v2_log("Instance created");
     return inst;
 }
@@ -677,12 +751,14 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         v2_TapeSat_UpdateControls(inst);
         v2_WF_UpdateControls(inst);
         v2_Tone_UpdateControls(inst, SAMPLE_RATE);
+        v2_Hiss_UpdateControls(inst);
 
-        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Tone */
+        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Tone -> Hiss */
         v2_GS_Process(inst, left_buf, right_buf, chunk);
         v2_TapeSat_Process(inst, left_buf, right_buf, chunk);
         v2_WF_Process(inst, left_buf, right_buf, left_buf, right_buf, chunk, SAMPLE_RATE);
         v2_Tone_Process(inst, left_buf, right_buf, chunk);
+        v2_Hiss_Process(inst, left_buf, right_buf, chunk);
 
         /* Apply post-chain output level, then soft clip and convert back */
         for (int i = 0; i < chunk; i++) {
@@ -724,6 +800,9 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     } else if (strcmp(key, "output") == 0) {
         inst->param_output = v;
         v2_GS_SetOutputLevel(inst, v);
+    } else if (strcmp(key, "noise") == 0) {
+        inst->param_noise = v;
+        v2_Hiss_SetAmount(inst, v);
     }
 }
 
@@ -737,6 +816,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "wobble") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_wobble);
     if (strcmp(key, "tone") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_tone);
     if (strcmp(key, "output") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_output);
+    if (strcmp(key, "noise") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_noise);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
 
     /* UI hierarchy for shadow parameter editor */
