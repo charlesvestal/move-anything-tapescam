@@ -278,6 +278,19 @@ typedef struct {
     float hiss_levelLin;
     float hiss_noiseColorFactor;
     float hiss_pinkState[2][7];  /* 7 pink noise state vars per channel */
+
+    /* LoFi Compressor state */
+    int comp_mode;
+    float comp_envelopeL;
+    float comp_envelopeR;
+    float comp_smoothedGainL;
+    float comp_smoothedGainR;
+    float comp_attackCoeff;
+    float comp_releaseCoeff;
+    float comp_threshold;
+    float comp_ratio;
+    float comp_makeupGain;
+    float comp_maxBoost;
 } tapescam_instance_t;
 
 static void v2_log(const char *msg) {
@@ -667,6 +680,97 @@ static void v2_Hiss_Process(tapescam_instance_t *inst, float *left, float *right
     }
 }
 
+static void v2_Comp_SetMode(tapescam_instance_t *inst, int mode, float sampleRate) {
+    inst->comp_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+
+    float attackMs = inst->comp_mode == 2 ? 2.0f : 5.0f;
+    float releaseMs = inst->comp_mode == 2 ? 800.0f : 400.0f;
+
+    inst->comp_attackCoeff = expf(-1.0f / (sampleRate * attackMs * 0.001f));
+    inst->comp_releaseCoeff = expf(-1.0f / (sampleRate * releaseMs * 0.001f));
+
+    switch (inst->comp_mode) {
+        case 0:
+            inst->comp_threshold = 1.0f;
+            inst->comp_ratio = 1.0f;
+            inst->comp_makeupGain = 1.0f;
+            inst->comp_maxBoost = 1.0f;
+            break;
+        case 1:
+            inst->comp_threshold = 0.45f;
+            inst->comp_ratio = 8.0f;
+            inst->comp_makeupGain = 0.7f;
+            inst->comp_maxBoost = 6.0f;
+            break;
+        case 2:
+            inst->comp_threshold = 0.65f;
+            inst->comp_ratio = 18.0f;
+            inst->comp_makeupGain = 0.5f;
+            inst->comp_maxBoost = 12.0f;
+            break;
+    }
+}
+
+static void v2_Comp_Init(tapescam_instance_t *inst, float sampleRate) {
+    inst->comp_mode = 0;
+    inst->comp_envelopeL = 0.0f;
+    inst->comp_envelopeR = 0.0f;
+    inst->comp_smoothedGainL = 1.0f;
+    inst->comp_smoothedGainR = 1.0f;
+    v2_Comp_SetMode(inst, 0, sampleRate);
+}
+
+static void v2_Comp_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
+    if (inst->comp_mode == 0) return;
+
+    for (int i = 0; i < size; i++) {
+        float inL = left[i];
+        float inR = right[i];
+        float absL = fabsf(inL);
+        float absR = fabsf(inR);
+
+        /* Envelope follower */
+        float envCoeffL = (absL > inst->comp_envelopeL) ? inst->comp_attackCoeff : inst->comp_releaseCoeff;
+        float envCoeffR = (absR > inst->comp_envelopeR) ? inst->comp_attackCoeff : inst->comp_releaseCoeff;
+        inst->comp_envelopeL = envCoeffL * inst->comp_envelopeL + (1.0f - envCoeffL) * absL;
+        inst->comp_envelopeR = envCoeffR * inst->comp_envelopeR + (1.0f - envCoeffR) * absR;
+
+        /* Calculate upward compression gain */
+        float targetGainL = 1.0f, targetGainR = 1.0f;
+        if (inst->comp_envelopeL < inst->comp_threshold) {
+            float reduction = inst->comp_threshold - inst->comp_envelopeL;
+            float normalizedReduction = reduction / inst->comp_threshold;
+            targetGainL = (1.0f + (inst->comp_maxBoost - 1.0f) * normalizedReduction) * inst->comp_makeupGain;
+        } else {
+            targetGainL = inst->comp_makeupGain;
+        }
+        if (inst->comp_envelopeR < inst->comp_threshold) {
+            float reduction = inst->comp_threshold - inst->comp_envelopeR;
+            float normalizedReduction = reduction / inst->comp_threshold;
+            targetGainR = (1.0f + (inst->comp_maxBoost - 1.0f) * normalizedReduction) * inst->comp_makeupGain;
+        } else {
+            targetGainR = inst->comp_makeupGain;
+        }
+
+        /* Smooth gain changes */
+        float smoothCoeffL = (targetGainL < inst->comp_smoothedGainL) ? 0.2f : 0.000125f;
+        float smoothCoeffR = (targetGainR < inst->comp_smoothedGainR) ? 0.2f : 0.000125f;
+        inst->comp_smoothedGainL += (targetGainL - inst->comp_smoothedGainL) * smoothCoeffL;
+        inst->comp_smoothedGainR += (targetGainR - inst->comp_smoothedGainR) * smoothCoeffR;
+
+        /* Apply with safety limiting */
+        float maxAllowedGain = inst->comp_mode == 2 ? 15.0f : 8.0f;
+        float cappedGainL = fminf(inst->comp_smoothedGainL, maxAllowedGain);
+        float cappedGainR = fminf(inst->comp_smoothedGainR, maxAllowedGain);
+
+        float maxGainL = absL > 0.001f ? 0.9f / absL : cappedGainL;
+        float maxGainR = absR > 0.001f ? 0.9f / absR : cappedGainR;
+
+        left[i] = inL * fminf(cappedGainL, maxGainL);
+        right[i] = inR * fminf(cappedGainR, maxGainR);
+    }
+}
+
 static void* v2_create_instance(const char *module_dir, const char *config_json) {
     v2_log("Creating instance");
 
@@ -711,6 +815,8 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v2_Hiss_Init(inst);
     v2_Hiss_SetAmount(inst, inst->param_noise);
 
+    v2_Comp_Init(inst, SAMPLE_RATE);
+
     v2_log("Instance created");
     return inst;
 }
@@ -753,12 +859,13 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         v2_Tone_UpdateControls(inst, SAMPLE_RATE);
         v2_Hiss_UpdateControls(inst);
 
-        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Tone -> Hiss */
+        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Tone -> Hiss -> Comp */
         v2_GS_Process(inst, left_buf, right_buf, chunk);
         v2_TapeSat_Process(inst, left_buf, right_buf, chunk);
         v2_WF_Process(inst, left_buf, right_buf, left_buf, right_buf, chunk, SAMPLE_RATE);
         v2_Tone_Process(inst, left_buf, right_buf, chunk);
         v2_Hiss_Process(inst, left_buf, right_buf, chunk);
+        v2_Comp_Process(inst, left_buf, right_buf, chunk);
 
         /* Apply post-chain output level, then soft clip and convert back */
         for (int i = 0; i < chunk; i++) {
@@ -803,6 +910,9 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     } else if (strcmp(key, "noise") == 0) {
         inst->param_noise = v;
         v2_Hiss_SetAmount(inst, v);
+    } else if (strcmp(key, "compression") == 0) {
+        inst->param_compression = (int)(v * 2.0f + 0.5f);
+        v2_Comp_SetMode(inst, inst->param_compression, SAMPLE_RATE);
     }
 }
 
@@ -817,6 +927,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (strcmp(key, "tone") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_tone);
     if (strcmp(key, "output") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_output);
     if (strcmp(key, "noise") == 0) return snprintf(buf, buf_len, "%.2f", inst->param_noise);
+    if (strcmp(key, "compression") == 0) return snprintf(buf, buf_len, "%d", inst->param_compression);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
 
     /* UI hierarchy for shadow parameter editor */
