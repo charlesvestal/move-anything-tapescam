@@ -307,6 +307,18 @@ static void v2_log(const char *msg) {
     }
 }
 
+/* JSON parsing helper for state restore */
+static int json_get_number(const char *json, const char *key, float *out) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char *pos = strstr(json, search);
+    if (!pos) return -1;
+    pos += strlen(search);
+    while (*pos == ' ') pos++;
+    *out = (float)atof(pos);
+    return 0;
+}
+
 /* Instance-based DSP helpers */
 static void v2_GS_Init(tapescam_instance_t *inst, float sampleRate) {
     inst->gs_trimGainLin = 1.0f;
@@ -1014,6 +1026,51 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     } else if (strcmp(key, "widen") == 0) {
         inst->param_widen = (v > 0.5f) ? 1 : 0;
+    } else if (strcmp(key, "state") == 0) {
+        /* Restore all parameters from JSON state */
+        float fval;
+        if (json_get_number(val, "input", &fval) == 0) {
+            inst->param_input = Clamp(fval, 0.0f, 1.0f);
+        }
+        if (json_get_number(val, "drive", &fval) == 0) {
+            inst->param_drive = Clamp(fval, 0.0f, 1.0f);
+        }
+        if (json_get_number(val, "color", &fval) == 0) {
+            inst->param_color = Clamp(fval, 0.0f, 1.0f);
+        }
+        if (json_get_number(val, "wobble", &fval) == 0) {
+            inst->param_wobble = Clamp(fval, 0.0f, 1.0f);
+            v2_WF_SetAmount(inst, inst->param_wobble);
+        }
+        if (json_get_number(val, "tone", &fval) == 0) {
+            inst->param_tone = Clamp(fval, 0.0f, 1.0f);
+            v2_Tone_SetAmount(inst, inst->param_tone);
+        }
+        if (json_get_number(val, "output", &fval) == 0) {
+            inst->param_output = Clamp(fval, 0.0f, 1.0f);
+            v2_GS_SetOutputLevel(inst, inst->param_output);
+        }
+        if (json_get_number(val, "noise", &fval) == 0) {
+            inst->param_noise = Clamp(fval, 0.0f, 1.0f);
+            v2_Hiss_SetAmount(inst, inst->param_noise);
+        }
+        if (json_get_number(val, "age", &fval) == 0) {
+            inst->param_age = (int)Clamp(fval, 0.0f, 2.0f);
+        }
+        if (json_get_number(val, "speed", &fval) == 0) {
+            inst->param_speed = (int)Clamp(fval, 0.0f, 2.0f);
+        }
+        if (json_get_number(val, "compression", &fval) == 0) {
+            inst->param_compression = (int)Clamp(fval, 0.0f, 2.0f);
+            v2_Comp_SetMode(inst, inst->param_compression, SAMPLE_RATE);
+        }
+        if (json_get_number(val, "widen", &fval) == 0) {
+            inst->param_widen = (fval > 0.5f) ? 1 : 0;
+        }
+        /* Apply combined modifiers after restoring age/speed */
+        v2_ApplyAgeSpeedModifiers(inst);
+        v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
+        v2_TapeSat_SetDrive(inst, inst->param_color);
     }
 }
 
@@ -1048,6 +1105,16 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     }
     if (strcmp(key, "widen") == 0) return snprintf(buf, buf_len, "%d", inst->param_widen);
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
+    if (strcmp(key, "state") == 0) {
+        /* Serialize all parameters to JSON for state save */
+        return snprintf(buf, buf_len,
+            "{\"input\":%.3f,\"drive\":%.3f,\"color\":%.3f,\"wobble\":%.3f,"
+            "\"tone\":%.3f,\"output\":%.3f,\"noise\":%.3f,"
+            "\"age\":%d,\"speed\":%d,\"compression\":%d,\"widen\":%d}",
+            inst->param_input, inst->param_drive, inst->param_color, inst->param_wobble,
+            inst->param_tone, inst->param_output, inst->param_noise,
+            inst->param_age, inst->param_speed, inst->param_compression, inst->param_widen);
+    }
 
     /* UI hierarchy for shadow parameter editor */
     if (strcmp(key, "ui_hierarchy") == 0) {
