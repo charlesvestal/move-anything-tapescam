@@ -1,5 +1,5 @@
 {
-  "version": "0.4.1",
-  "download_url": "https://github.com/charlesvestal/move-anything-tapescam/releases/download/v0.4.1/tapescam-module.tar.gz",
+  "version": "0.4.2",
+  "download_url": "https://github.com/charlesvestal/move-anything-tapescam/releases/download/v0.4.2/tapescam-module.tar.gz",
   "install_path": "chain/audio_fx"
 }
