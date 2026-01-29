@@ -297,6 +297,56 @@ typedef struct {
     float mod_saturationMul;
     float mod_wowDepthScale;
     float mod_flutterDepthScale;
+
+    /* GainStage speed-dependent filter frequencies */
+    float gs_preHpCutHz;
+    float gs_preLpCutHz;
+    float gs_postLpCutHz;
+
+    /* TapeSat HF rolloff */
+    GS_Biquad sat_hfRolloff[2];
+    float sat_hfRolloffCutoff;
+
+    /* WowFlutter baseline motion */
+    float wf_baseAgeDriftDepth;
+    float wf_baseSpeedFlutterDepth;
+    float wf_ageDriftAlpha;
+    float wf_flutterDriftAlpha;
+    float wf_driftL;
+    float wf_driftR;
+    float wf_flutterJitL;
+    float wf_flutterJitR;
+    float wf_depthMultiplier;
+    float wf_wowRandomness;
+    float wf_flutterTurbulence;
+
+    /* Stereo blend */
+    float hiss_stereoBlend;
+    float wf_stereoBlend;
+
+    /* Dropout state per channel */
+    struct {
+        int active;
+        int stage;           /* 0=attack, 1=hold, 2=release */
+        int stage_samples;
+        int attack_samples;
+        int hold_samples;
+        int release_samples;
+        float min_gain;
+        float env;           /* current envelope value 1.0→min_gain→1.0 */
+    } dropout_state[2];
+
+    /* Dropout parameters */
+    float dropout_rate_hz;
+    float dropout_depth_min_db;
+    float dropout_depth_max_db;
+    float dropout_dur_min_ms;
+    float dropout_dur_max_ms;
+    float dropout_cluster_prob;
+    float dropout_mono_link;
+    float dropout_min_rest_sec;
+    float dropout_rest_samples;
+    float dropout_cluster_window;
 } tapescam_instance_t;
 
 static void v2_log(const char *msg) {
@@ -320,6 +370,40 @@ static int json_get_number(const char *json, const char *key, float *out) {
 }
 
 /* Instance-based DSP helpers */
+
+/* Speed-dependent filter frequencies (from VST) */
+static void v2_GS_SetSpeedMode(tapescam_instance_t *inst, int speed, float sampleRate) {
+    switch (speed) {
+        case 0: /* HIGH - bright/clean */
+            inst->gs_preHpCutHz = 144.0f;   /* 160 * 0.9 */
+            inst->gs_preLpCutHz = 5720.0f;  /* 5200 * 1.1 */
+            inst->gs_postLpCutHz = 17500.0f;
+            break;
+        case 1: /* STD */
+            inst->gs_preHpCutHz = 160.0f;
+            inst->gs_preLpCutHz = 4680.0f;  /* 5200 * 0.9 */
+            inst->gs_postLpCutHz = 14000.0f;
+            break;
+        case 2: /* LOW - lo-fi */
+            inst->gs_preHpCutHz = 112.0f;   /* 160 * 0.7 */
+            inst->gs_preLpCutHz = 3380.0f;  /* 5200 * 0.65 */
+            inst->gs_postLpCutHz = 9000.0f;
+            break;
+        default:
+            inst->gs_preHpCutHz = 144.0f;
+            inst->gs_preLpCutHz = 5720.0f;
+            inst->gs_postLpCutHz = 17500.0f;
+            break;
+    }
+
+    /* Recompute filter coefficients */
+    for (int ch = 0; ch < 2; ch++) {
+        GS_BiquadSetHighpass(&inst->gs_preHP[ch], sampleRate, inst->gs_preHpCutHz, 0.7071f);
+        GS_BiquadSetLowpass(&inst->gs_preLP[ch], sampleRate, inst->gs_preLpCutHz, 0.7071f);
+        GS_BiquadSetLowpass(&inst->gs_postLP[ch], sampleRate, inst->gs_postLpCutHz, 0.7071f);
+    }
+}
+
 static void v2_GS_Init(tapescam_instance_t *inst, float sampleRate) {
     inst->gs_trimGainLin = 1.0f;
     inst->gs_channelGainLin = 1.0f;
@@ -331,10 +415,7 @@ static void v2_GS_Init(tapescam_instance_t *inst, float sampleRate) {
     inst->gs_stage2Softness = 1.2f;
     inst->gs_stage2Asymmetry = 0.05f;
 
-    float preHpCutHz = 160.0f * 0.9f;
-    float preLpCutHz = 5200.0f * 1.1f;
-    float postLpCutHz = 17500.0f;
-
+    /* Initialize filter state */
     for (int ch = 0; ch < 2; ch++) {
         memset(&inst->gs_preHP[ch], 0, sizeof(GS_Biquad));
         memset(&inst->gs_preLP[ch], 0, sizeof(GS_Biquad));
@@ -342,11 +423,10 @@ static void v2_GS_Init(tapescam_instance_t *inst, float sampleRate) {
         inst->gs_preHP[ch].b0 = 1.0f;
         inst->gs_preLP[ch].b0 = 1.0f;
         inst->gs_postLP[ch].b0 = 1.0f;
-
-        GS_BiquadSetHighpass(&inst->gs_preHP[ch], sampleRate, preHpCutHz, 0.7071f);
-        GS_BiquadSetLowpass(&inst->gs_preLP[ch], sampleRate, preLpCutHz, 0.7071f);
-        GS_BiquadSetLowpass(&inst->gs_postLP[ch], sampleRate, postLpCutHz, 0.7071f);
     }
+
+    /* Default to HIGH speed (brightest/cleanest) */
+    v2_GS_SetSpeedMode(inst, 0, sampleRate);
 }
 
 static void v2_GS_SetParams(tapescam_instance_t *inst, float drive, float color) {
@@ -418,10 +498,39 @@ static void v2_GS_Process(tapescam_instance_t *inst, float *left, float *right, 
     }
 }
 
+static void v2_TapeSat_Init(tapescam_instance_t *inst, float sampleRate) {
+    inst->sat_targetDrive = 0.0f;
+    inst->sat_smoothedDrive = 0.0f;
+    inst->sat_factor = 0.0f;
+    inst->sat_hfRolloffCutoff = 18000.0f;
+
+    /* Initialize HF rolloff filters */
+    for (int ch = 0; ch < 2; ch++) {
+        memset(&inst->sat_hfRolloff[ch], 0, sizeof(GS_Biquad));
+        inst->sat_hfRolloff[ch].b0 = 1.0f;
+        GS_BiquadSetLowpass(&inst->sat_hfRolloff[ch], sampleRate, inst->sat_hfRolloffCutoff, 0.7071f);
+    }
+}
+
 static void v2_TapeSat_SetDrive(tapescam_instance_t *inst, float normalizedDrive) {
     float shaped = Clamp(normalizedDrive, 0.0f, 1.0f);
     shaped = powf(shaped, 0.8f);
     inst->sat_targetDrive = shaped;
+}
+
+/* HF rolloff cutoff calculation (from VST) */
+static void v2_TapeSat_UpdateHFRolloff(tapescam_instance_t *inst, float sampleRate) {
+    /* Drive-dependent: 18kHz at drive=0 → 10kHz at drive=1 */
+    float drive = inst->sat_smoothedDrive;
+    float cutoff = 18000.0f - drive * 8000.0f;
+
+    /* Apply speed override if set */
+    if (inst->sat_hfRolloffCutoff > 0.0f && inst->sat_hfRolloffCutoff < cutoff) {
+        cutoff = inst->sat_hfRolloffCutoff;
+    }
+
+    GS_BiquadSetLowpass(&inst->sat_hfRolloff[0], sampleRate, cutoff, 0.7071f);
+    GS_BiquadSetLowpass(&inst->sat_hfRolloff[1], sampleRate, cutoff, 0.7071f);
 }
 
 static void v2_TapeSat_UpdateControls(tapescam_instance_t *inst) {
@@ -431,6 +540,9 @@ static void v2_TapeSat_UpdateControls(tapescam_instance_t *inst) {
         inst->sat_smoothedDrive = inst->sat_targetDrive;
     }
     inst->sat_factor = Clamp(inst->sat_smoothedDrive * 1.35f * inst->mod_saturationMul, 0.0f, 2.0f);
+
+    /* Update HF rolloff based on smoothed drive */
+    v2_TapeSat_UpdateHFRolloff(inst, SAMPLE_RATE);
 }
 
 static void v2_TapeSat_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
@@ -440,8 +552,13 @@ static void v2_TapeSat_Process(tapescam_instance_t *inst, float *left, float *ri
 
     float drive = 1.0f + satAmount * 2.5f;
     for (int i = 0; i < size; i++) {
+        /* Saturation */
         left[i] = tanhf(left[i] * drive);
         right[i] = tanhf(right[i] * drive);
+
+        /* HF rolloff (anti-aliasing) */
+        left[i] = GS_BiquadProcess(&inst->sat_hfRolloff[0], left[i]);
+        right[i] = GS_BiquadProcess(&inst->sat_hfRolloff[1], right[i]);
     }
 }
 
@@ -453,6 +570,10 @@ static float v2_WF_NextRand(tapescam_instance_t *inst) {
 static float v2_WF_NextRandCentered(tapescam_instance_t *inst) {
     return v2_WF_NextRand(inst) * 2.0f - 1.0f;
 }
+
+/* Constants for baseline motion (from VST) */
+#define kMaxAgeDriftDepthSec 0.0015f
+#define kMaxSpeedFlutterDepthSec 0.0006f
 
 static void v2_WF_Init(tapescam_instance_t *inst, float sampleRate) {
     inst->delayBufL = (float*)calloc(kMaxDelaySamples, sizeof(float));
@@ -483,7 +604,49 @@ static void v2_WF_Init(tapescam_instance_t *inst, float sampleRate) {
     inst->wf_flutterNoiseStateL = 0.0f;
     inst->wf_flutterNoiseStateR = 0.0f;
 
+    /* Initialize baseline motion state */
+    inst->wf_baseAgeDriftDepth = 0.0f;
+    inst->wf_baseSpeedFlutterDepth = 0.0f;
+    inst->wf_ageDriftAlpha = 0.0f;
+    inst->wf_flutterDriftAlpha = 0.0f;
+    inst->wf_driftL = 0.0f;
+    inst->wf_driftR = 0.0f;
+    inst->wf_flutterJitL = 0.0f;
+    inst->wf_flutterJitR = 0.0f;
+    inst->wf_depthMultiplier = 1.0f;
+    inst->wf_wowRandomness = 0.4f;
+    inst->wf_flutterTurbulence = 0.2f;
+    inst->wf_stereoBlend = 1.0f;
+
     inst->randState ^= (uint32_t)sampleRate;
+}
+
+/* SetBaselineMotion (from VST) */
+static void v2_WF_SetBaselineMotion(tapescam_instance_t *inst, float ageAmount, float speedAmount) {
+    inst->wf_baseAgeDriftDepth = ageAmount * kMaxAgeDriftDepthSec;
+    inst->wf_baseSpeedFlutterDepth = speedAmount * kMaxSpeedFlutterDepthSec;
+
+    inst->wf_ageDriftAlpha = (inst->wf_baseAgeDriftDepth > 0.0f)
+        ? (0.0002f + 0.0012f * ageAmount) : 0.0f;
+    inst->wf_flutterDriftAlpha = (inst->wf_baseSpeedFlutterDepth > 0.0f)
+        ? (0.0008f + 0.0025f * speedAmount) : 0.0f;
+}
+
+/* SetDepthMultiplier (from VST) */
+static void v2_WF_SetDepthMultiplier(tapescam_instance_t *inst, float multiplier) {
+    inst->wf_depthMultiplier = Clamp(multiplier, 0.5f, 2.0f);
+
+    /* Tie randomness to tape age */
+    if (multiplier <= 0.85f) {
+        inst->wf_wowRandomness = 0.2f;
+        inst->wf_flutterTurbulence = 0.1f;
+    } else if (multiplier <= 1.15f) {
+        inst->wf_wowRandomness = 0.4f;
+        inst->wf_flutterTurbulence = 0.2f;
+    } else {
+        inst->wf_wowRandomness = 0.75f;
+        inst->wf_flutterTurbulence = 0.45f;
+    }
 }
 
 static void v2_WF_SetAmount(tapescam_instance_t *inst, float amount) {
@@ -517,11 +680,14 @@ static void v2_WF_Process(tapescam_instance_t *inst, float *inL, float *inR, flo
         return;
     }
 
-    float wowAmt = inst->wf_wowAmount;
-    float flutterAmt = inst->wf_flutterAmount;
+    float wowAmt = inst->wf_wowAmount * inst->wf_depthMultiplier * inst->mod_wowDepthScale;
+    float flutterAmt = inst->wf_flutterAmount * inst->wf_depthMultiplier * inst->mod_flutterDepthScale;
     float invSr = 1.0f / sampleRate;
 
-    int bypassDelay = (inst->wf_activationRamp < 1.0e-4f && wowAmt <= 1.0e-5f && flutterAmt <= 1.0e-5f);
+    /* Check if we have any modulation (including baseline drift) */
+    int hasBaselineDrift = (inst->wf_ageDriftAlpha > 0.0f || inst->wf_flutterDriftAlpha > 0.0f);
+    int bypassDelay = (!hasBaselineDrift && inst->wf_activationRamp < 1.0e-4f && wowAmt <= 1.0e-5f && flutterAmt <= 1.0e-5f);
+
     if (bypassDelay) {
         for (int i = 0; i < size; i++) {
             outL[i] = inL[i];
@@ -540,15 +706,48 @@ static void v2_WF_Process(tapescam_instance_t *inst, float *inL, float *inR, flo
     float maxFlutterDepthSec = 0.002f;
     float maxDevSec = 0.0042f;
 
+    /* Use randomness/turbulence values based on depth multiplier */
+    float wowRandomness = inst->wf_wowRandomness;
+    float flutterTurbulence = inst->wf_flutterTurbulence;
+
     for (int i = 0; i < size; i++) {
         float xL = inL[i], xR = inR[i];
-        crossfadeGain += (inst->wf_activationRamp - crossfadeGain) * crossfadeAlpha;
 
-        inst->wf_wowNoiseStateL += (v2_WF_NextRandCentered(inst) - inst->wf_wowNoiseStateL) * 0.00018f;
-        inst->wf_wowNoiseStateR += (v2_WF_NextRandCentered(inst) - inst->wf_wowNoiseStateR) * 0.00018f;
-        inst->wf_flutterNoiseStateL += (v2_WF_NextRandCentered(inst) - inst->wf_flutterNoiseStateL) * 0.00025f;
-        inst->wf_flutterNoiseStateR += (v2_WF_NextRandCentered(inst) - inst->wf_flutterNoiseStateR) * 0.00025f;
+        /* Update crossfade (1.0 when active, accounts for baseline drift) */
+        float targetCrossfade = (inst->wf_activationRamp > 0.001f || hasBaselineDrift) ? 1.0f : inst->wf_activationRamp;
+        crossfadeGain += (targetCrossfade - crossfadeGain) * crossfadeAlpha;
 
+        /* Update noise states with turbulence-scaled smoothing */
+        float wowNoiseAlpha = 0.00018f * (1.0f + wowRandomness);
+        float flutterNoiseAlpha = 0.00025f * (1.0f + flutterTurbulence);
+        inst->wf_wowNoiseStateL += (v2_WF_NextRandCentered(inst) - inst->wf_wowNoiseStateL) * wowNoiseAlpha;
+        inst->wf_wowNoiseStateR += (v2_WF_NextRandCentered(inst) - inst->wf_wowNoiseStateR) * wowNoiseAlpha;
+        inst->wf_flutterNoiseStateL += (v2_WF_NextRandCentered(inst) - inst->wf_flutterNoiseStateL) * flutterNoiseAlpha;
+        inst->wf_flutterNoiseStateR += (v2_WF_NextRandCentered(inst) - inst->wf_flutterNoiseStateR) * flutterNoiseAlpha;
+
+        /* Update baseline drift (age-related constant drift) */
+        if (inst->wf_ageDriftAlpha > 0.0f) {
+            float targetL = v2_WF_NextRandCentered(inst) * inst->wf_baseAgeDriftDepth;
+            float targetR = targetL + 0.12f * v2_WF_NextRandCentered(inst) * inst->wf_baseAgeDriftDepth;
+            inst->wf_driftL += (targetL - inst->wf_driftL) * inst->wf_ageDriftAlpha;
+            inst->wf_driftR += (targetR - inst->wf_driftR) * inst->wf_ageDriftAlpha;
+        } else {
+            inst->wf_driftL *= 0.9996f;
+            inst->wf_driftR *= 0.9996f;
+        }
+
+        /* Update flutter jitter (speed-related flutter) */
+        if (inst->wf_flutterDriftAlpha > 0.0f) {
+            float targetL = v2_WF_NextRandCentered(inst) * inst->wf_baseSpeedFlutterDepth;
+            float targetR = targetL + 0.08f * v2_WF_NextRandCentered(inst) * inst->wf_baseSpeedFlutterDepth;
+            inst->wf_flutterJitL += (targetL - inst->wf_flutterJitL) * inst->wf_flutterDriftAlpha;
+            inst->wf_flutterJitR += (targetR - inst->wf_flutterJitR) * inst->wf_flutterDriftAlpha;
+        } else {
+            inst->wf_flutterJitL *= 0.9996f;
+            inst->wf_flutterJitR *= 0.9996f;
+        }
+
+        /* Update oscillator phases */
         inst->wf_wowPhaseL += inst->wf_wowRateHz * invSr;
         if (inst->wf_wowPhaseL >= 1.0f) inst->wf_wowPhaseL -= 1.0f;
         inst->wf_fltPhaseL += inst->wf_flutterRateHz * invSr;
@@ -559,17 +758,28 @@ static void v2_WF_Process(tapescam_instance_t *inst, float *inL, float *inR, flo
         inst->wf_fltPhaseR += inst->wf_flutterRateHz * 0.97f * invSr;
         if (inst->wf_fltPhaseR >= 1.0f) inst->wf_fltPhaseR -= 1.0f;
 
+        /* Calculate modulation shapes with randomness */
         float depthSlow = sqrtf(fmaxf(inst->wf_depthShape, 0.0f));
-        float wowNoiseMix = Clamp(0.4f * (0.10f + 0.45f * depthSlow), 0.0f, 0.65f);
-        float flutterNoiseMix = Clamp(0.2f * (0.12f + 0.45f * depthSlow), 0.0f, 0.7f);
+        float wowNoiseMix = Clamp(wowRandomness * (0.10f + 0.45f * depthSlow), 0.0f, 0.65f);
+        float flutterNoiseMix = Clamp(flutterTurbulence * (0.12f + 0.45f * depthSlow), 0.0f, 0.7f);
 
         float wowShapeL = (1.0f - wowNoiseMix) * sinf(kTwoPi * inst->wf_wowPhaseL) + wowNoiseMix * inst->wf_wowNoiseStateL;
         float flutterShapeL = (1.0f - flutterNoiseMix) * sinf(kTwoPi * inst->wf_fltPhaseL) + flutterNoiseMix * inst->wf_flutterNoiseStateL;
         float wowShapeR = (1.0f - wowNoiseMix) * sinf(kTwoPi * inst->wf_wowPhaseR) + wowNoiseMix * inst->wf_wowNoiseStateR;
         float flutterShapeR = (1.0f - flutterNoiseMix) * sinf(kTwoPi * inst->wf_fltPhaseR) + flutterNoiseMix * inst->wf_flutterNoiseStateR;
 
-        float devSamplesL = (maxWowDepthSec * wowAmt * wowShapeL + maxFlutterDepthSec * flutterAmt * flutterShapeL) * sampleRate;
-        float devSamplesR = (maxWowDepthSec * wowAmt * 1.03f * wowShapeR + maxFlutterDepthSec * flutterAmt * 0.97f * flutterShapeR) * sampleRate;
+        /* Calculate deviation including baseline drift */
+        float wowDepthL = maxWowDepthSec * wowAmt;
+        float wowDepthR = maxWowDepthSec * wowAmt * 1.03f;
+        float flutterDepthL = maxFlutterDepthSec * flutterAmt;
+        float flutterDepthR = maxFlutterDepthSec * flutterAmt * 0.97f;
+
+        /* Total deviation = drift + wow + flutter (in seconds) */
+        float devSecL = inst->wf_driftL + inst->wf_flutterJitL + wowDepthL * wowShapeL + flutterDepthL * flutterShapeL;
+        float devSecR = inst->wf_driftR + inst->wf_flutterJitR + wowDepthR * wowShapeR + flutterDepthR * flutterShapeR;
+
+        float devSamplesL = devSecL * sampleRate;
+        float devSamplesR = devSecR * sampleRate;
 
         float maxDevSamples = maxDevSec * sampleRate;
         devSamplesL = Clamp(devSamplesL, -maxDevSamples, maxDevSamples);
@@ -643,6 +853,7 @@ static void v2_Hiss_Init(tapescam_instance_t *inst) {
     inst->hiss_smoothedAmount = 0.0f;
     inst->hiss_levelLin = 0.0f;
     inst->hiss_noiseColorFactor = 0.0f;
+    inst->hiss_stereoBlend = 1.0f;  /* Default to stereo */
     memset(inst->hiss_pinkState, 0, sizeof(inst->hiss_pinkState));
 }
 
@@ -685,6 +896,7 @@ static void v2_Hiss_Process(tapescam_instance_t *inst, float *left, float *right
 
     float colorFactor = inst->hiss_noiseColorFactor;
     float level = inst->hiss_levelLin;
+    float blend = inst->hiss_stereoBlend;  /* 0=mono, 1=stereo */
 
     for (int i = 0; i < size; i++) {
         float whiteL = v2_WF_NextRandCentered(inst);
@@ -696,6 +908,11 @@ static void v2_Hiss_Process(tapescam_instance_t *inst, float *left, float *right
             noiseL = (1.0f - colorFactor) * whiteL + colorFactor * v2_Hiss_ProcessPink(inst, 0, whiteL);
             noiseR = (1.0f - colorFactor) * whiteR + colorFactor * v2_Hiss_ProcessPink(inst, 1, whiteR);
         }
+
+        /* Apply stereo blend (0=mono, 1=full stereo) */
+        float monoNoise = 0.5f * (noiseL + noiseR);
+        noiseL = monoNoise + blend * (noiseL - monoNoise);
+        noiseR = monoNoise + blend * (noiseR - monoNoise);
 
         left[i] += noiseL * level;
         right[i] += noiseR * level;
@@ -793,6 +1010,189 @@ static void v2_Comp_Process(tapescam_instance_t *inst, float *left, float *right
     }
 }
 
+/* ============================================================================
+ * DROPOUT MODULE - Simulates tape dropouts (brief gain dips)
+ * ============================================================================ */
+
+static void v2_Dropout_Init(tapescam_instance_t *inst) {
+    for (int ch = 0; ch < 2; ch++) {
+        inst->dropout_state[ch].active = 0;
+        inst->dropout_state[ch].stage = 0;
+        inst->dropout_state[ch].stage_samples = 0;
+        inst->dropout_state[ch].attack_samples = 0;
+        inst->dropout_state[ch].hold_samples = 0;
+        inst->dropout_state[ch].release_samples = 0;
+        inst->dropout_state[ch].min_gain = 1.0f;
+        inst->dropout_state[ch].env = 1.0f;
+    }
+    inst->dropout_rate_hz = 0.0f;
+    inst->dropout_depth_min_db = 0.0f;
+    inst->dropout_depth_max_db = 0.0f;
+    inst->dropout_dur_min_ms = 0.0f;
+    inst->dropout_dur_max_ms = 0.0f;
+    inst->dropout_cluster_prob = 0.0f;
+    inst->dropout_mono_link = 0.0f;
+    inst->dropout_min_rest_sec = 0.0f;
+    inst->dropout_rest_samples = 0.0f;
+    inst->dropout_cluster_window = 0.0f;
+}
+
+static void v2_Dropout_SetParamsForAge(tapescam_instance_t *inst, int age) {
+    switch (age) {
+        case 0: /* NEW - no dropouts */
+            inst->dropout_rate_hz = 0.0f;
+            inst->dropout_depth_min_db = 0.0f;
+            inst->dropout_depth_max_db = 0.0f;
+            inst->dropout_dur_min_ms = 0.0f;
+            inst->dropout_dur_max_ms = 0.0f;
+            inst->dropout_cluster_prob = 0.0f;
+            inst->dropout_mono_link = 1.0f;
+            inst->dropout_min_rest_sec = 0.0f;
+            break;
+        case 1: /* USED */
+            inst->dropout_rate_hz = 0.08f;
+            inst->dropout_depth_min_db = -2.5f;
+            inst->dropout_depth_max_db = -0.8f;
+            inst->dropout_dur_min_ms = 40.0f;
+            inst->dropout_dur_max_ms = 120.0f;
+            inst->dropout_cluster_prob = 0.10f;
+            inst->dropout_mono_link = 0.9f;
+            inst->dropout_min_rest_sec = 1.5f;
+            break;
+        case 2: /* WORN */
+            inst->dropout_rate_hz = 0.18f;
+            inst->dropout_depth_min_db = -6.0f;
+            inst->dropout_depth_max_db = -2.5f;
+            inst->dropout_dur_min_ms = 60.0f;
+            inst->dropout_dur_max_ms = 220.0f;
+            inst->dropout_cluster_prob = 0.15f;
+            inst->dropout_mono_link = 0.7f;
+            inst->dropout_min_rest_sec = 0.8f;
+            break;
+    }
+    inst->dropout_rest_samples = inst->dropout_min_rest_sec * SAMPLE_RATE;
+    inst->dropout_cluster_window = 0.0f;
+}
+
+static void v2_Dropout_TriggerEvent(tapescam_instance_t *inst, int ch) {
+    /* Random depth between min and max */
+    float depthDb = inst->dropout_depth_min_db +
+        v2_WF_NextRand(inst) * (inst->dropout_depth_max_db - inst->dropout_depth_min_db);
+    float minGain = dBToLin(depthDb);
+
+    /* Random duration */
+    float durMs = inst->dropout_dur_min_ms +
+        v2_WF_NextRand(inst) * (inst->dropout_dur_max_ms - inst->dropout_dur_min_ms);
+    int totalSamples = (int)(durMs * 0.001f * SAMPLE_RATE);
+
+    /* Divide into attack (20%), hold (50%), release (30%) */
+    int attackSamples = totalSamples / 5;
+    int holdSamples = totalSamples / 2;
+    int releaseSamples = totalSamples - attackSamples - holdSamples;
+
+    inst->dropout_state[ch].active = 1;
+    inst->dropout_state[ch].stage = 0;
+    inst->dropout_state[ch].stage_samples = 0;
+    inst->dropout_state[ch].attack_samples = attackSamples;
+    inst->dropout_state[ch].hold_samples = holdSamples;
+    inst->dropout_state[ch].release_samples = releaseSamples;
+    inst->dropout_state[ch].min_gain = minGain;
+    inst->dropout_state[ch].env = 1.0f;
+}
+
+static float v2_Dropout_AdvanceState(tapescam_instance_t *inst, int ch) {
+    if (!inst->dropout_state[ch].active) {
+        return 1.0f;
+    }
+
+    float env = inst->dropout_state[ch].env;
+    float minGain = inst->dropout_state[ch].min_gain;
+    int stage = inst->dropout_state[ch].stage;
+
+    inst->dropout_state[ch].stage_samples++;
+
+    if (stage == 0) { /* Attack: ramp down to min_gain */
+        if (inst->dropout_state[ch].attack_samples > 0) {
+            float t = (float)inst->dropout_state[ch].stage_samples /
+                      (float)inst->dropout_state[ch].attack_samples;
+            env = 1.0f - t * (1.0f - minGain);
+        }
+        if (inst->dropout_state[ch].stage_samples >= inst->dropout_state[ch].attack_samples) {
+            inst->dropout_state[ch].stage = 1;
+            inst->dropout_state[ch].stage_samples = 0;
+            env = minGain;
+        }
+    } else if (stage == 1) { /* Hold: stay at min_gain */
+        env = minGain;
+        if (inst->dropout_state[ch].stage_samples >= inst->dropout_state[ch].hold_samples) {
+            inst->dropout_state[ch].stage = 2;
+            inst->dropout_state[ch].stage_samples = 0;
+        }
+    } else { /* Release: ramp back to 1.0 */
+        if (inst->dropout_state[ch].release_samples > 0) {
+            float t = (float)inst->dropout_state[ch].stage_samples /
+                      (float)inst->dropout_state[ch].release_samples;
+            env = minGain + t * (1.0f - minGain);
+        }
+        if (inst->dropout_state[ch].stage_samples >= inst->dropout_state[ch].release_samples) {
+            inst->dropout_state[ch].active = 0;
+            env = 1.0f;
+        }
+    }
+
+    inst->dropout_state[ch].env = env;
+    return env;
+}
+
+static void v2_Dropout_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
+    if (inst->dropout_rate_hz <= 0.0f) return;
+
+    float triggerProb = inst->dropout_rate_hz / SAMPLE_RATE;
+
+    for (int i = 0; i < size; i++) {
+        /* Decrement rest counter */
+        if (inst->dropout_rest_samples > 0.0f) {
+            inst->dropout_rest_samples -= 1.0f;
+        }
+
+        /* Decrement cluster window */
+        if (inst->dropout_cluster_window > 0.0f) {
+            inst->dropout_cluster_window -= 1.0f;
+        }
+
+        /* Check for new dropout trigger */
+        if (inst->dropout_rest_samples <= 0.0f &&
+            !inst->dropout_state[0].active && !inst->dropout_state[1].active) {
+
+            float effectiveProb = triggerProb;
+            if (inst->dropout_cluster_window > 0.0f) {
+                effectiveProb *= (1.0f + inst->dropout_cluster_prob * 10.0f);
+            }
+
+            if (v2_WF_NextRand(inst) < effectiveProb) {
+                /* Trigger on left channel */
+                v2_Dropout_TriggerEvent(inst, 0);
+
+                /* Maybe trigger on right channel too (mono link) */
+                if (v2_WF_NextRand(inst) < inst->dropout_mono_link) {
+                    v2_Dropout_TriggerEvent(inst, 1);
+                }
+
+                /* Set rest period and cluster window */
+                inst->dropout_rest_samples = inst->dropout_min_rest_sec * SAMPLE_RATE;
+                inst->dropout_cluster_window = 0.3f * SAMPLE_RATE; /* 300ms cluster window */
+            }
+        }
+
+        /* Process dropout envelopes */
+        float gainL = v2_Dropout_AdvanceState(inst, 0);
+        float gainR = v2_Dropout_AdvanceState(inst, 1);
+
+        left[i] *= gainL;
+        right[i] *= gainR;
+    }
+}
+
 static void v2_ApplyAgeSpeedModifiers(tapescam_instance_t *inst) {
     int age = inst->param_age;
     int speed = inst->param_speed;
@@ -800,48 +1200,85 @@ static void v2_ApplyAgeSpeedModifiers(tapescam_instance_t *inst) {
     /* Age: 0=NEW, 1=USED, 2=WORN */
     float ageNorm = Clamp(age / 2.0f, 0.0f, 1.0f);
 
+    /* === Age effects === */
+
     /* Headroom: worn tape has less headroom */
     float ageHeadroomDb = (ageNorm - 0.5f) * 1.5f;
 
-    /* Speed: 0=HIGH (clean), 1=STD, 2=LOW (lo-fi) */
+    /* Saturation multiplier */
+    float ageSatMul = 1.0f + 0.4f * ageNorm;  /* 1.0→1.4 */
+
+    /* WowFlutter depth multiplier */
+    float ageWowMul = 0.8f + 0.5f * ageNorm;  /* 0.8→1.3 */
+
+    /* Dropout parameters */
+    v2_Dropout_SetParamsForAge(inst, age);
+
+    /* === Speed effects === */
+
     float speedHeadroomDb = 0.0f;
     float speedSatMul = 1.0f;
     float wowDepthScale = 1.0f;
     float flutterDepthScale = 1.0f;
+    float hfRolloffCutoff = 18000.0f;
+    float speedDriftAmount = 0.3f;
 
     switch (speed) {
-        case 0:  /* HIGH */
+        case 0:  /* HIGH - bright/clean */
             speedHeadroomDb = 2.0f;
             speedSatMul = 0.9f;
             wowDepthScale = 0.85f;
             flutterDepthScale = 0.85f;
+            hfRolloffCutoff = 18000.0f;
+            speedDriftAmount = 0.15f;
             break;
         case 1:  /* STD */
             speedHeadroomDb = -0.5f;
             speedSatMul = 1.0f;
             wowDepthScale = 1.3f;
             flutterDepthScale = 1.0f;
+            hfRolloffCutoff = 12000.0f;
+            speedDriftAmount = 0.5f;
             break;
-        case 2:  /* LOW */
+        case 2:  /* LOW - lo-fi */
             speedHeadroomDb = -2.0f;
             speedSatMul = 1.25f;
             wowDepthScale = 1.8f;
             flutterDepthScale = 1.1f;
+            hfRolloffCutoff = 8000.0f;
+            speedDriftAmount = 1.0f;
             break;
     }
 
-    /* Age modifiers */
-    float ageSatMul = 1.0f + 0.4f * ageNorm;
+    /* Age wow/flutter scales (combined differently from plan for better results) */
     float ageWowScale = 1.0f + 1.6f * ageNorm;
     float ageFlutterScale = 1.0f - 0.2f * ageNorm;
 
-    /* Apply combined headroom */
+    /* === Apply combined effects === */
+
+    /* Headroom */
     v2_GS_AdjustHeadroom(inst, ageHeadroomDb + speedHeadroomDb);
 
-    /* Store combined modifiers for use by other modules */
+    /* GainStage speed-dependent filters */
+    v2_GS_SetSpeedMode(inst, speed, SAMPLE_RATE);
+
+    /* Saturation */
     inst->mod_saturationMul = ageSatMul * speedSatMul;
+
+    /* TapeSat HF rolloff cutoff */
+    inst->sat_hfRolloffCutoff = hfRolloffCutoff;
+
+    /* WowFlutter */
     inst->mod_wowDepthScale = ageWowScale * wowDepthScale;
     inst->mod_flutterDepthScale = ageFlutterScale * flutterDepthScale;
+
+    /* WowFlutter depth multiplier and baseline motion */
+    v2_WF_SetDepthMultiplier(inst, ageWowMul);
+    v2_WF_SetBaselineMotion(inst, ageNorm, inst->param_wobble * speedDriftAmount);
+
+    /* Stereo blend (from widen toggle) */
+    inst->hiss_stereoBlend = inst->param_widen ? 1.0f : 0.0f;
+    inst->wf_stereoBlend = inst->param_widen ? 1.0f : 0.0f;
 }
 
 static void v2_Width_Process(tapescam_instance_t *inst, float *left, float *right, int size) {
@@ -871,8 +1308,8 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
         strncpy(inst->module_dir, module_dir, sizeof(inst->module_dir) - 1);
     }
 
-    /* Set default parameters */
-    inst->param_input = 1.0f;
+    /* Set default parameters (matching VST defaults) */
+    inst->param_input = 0.7f;   /* Slight reduction for headroom, matching VST */
     inst->param_drive = 0.0f;
     inst->param_color = 0.0f;
     inst->param_wobble = 0.0f;
@@ -891,6 +1328,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     v2_GS_SetOutputLevel(inst, inst->param_output);
 
+    v2_TapeSat_Init(inst, SAMPLE_RATE);
     v2_TapeSat_SetDrive(inst, inst->param_color);
 
     v2_WF_Init(inst, SAMPLE_RATE);
@@ -903,6 +1341,8 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     v2_Hiss_SetAmount(inst, inst->param_noise);
 
     v2_Comp_Init(inst, SAMPLE_RATE);
+
+    v2_Dropout_Init(inst);
 
     inst->gs_headroomAdjDb = 0.0f;
     inst->mod_saturationMul = 1.0f;
@@ -952,12 +1392,14 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         v2_Tone_UpdateControls(inst, SAMPLE_RATE);
         v2_Hiss_UpdateControls(inst);
 
-        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Tone -> Hiss -> Comp */
+        /* Process chain: GainStage -> TapeSat -> WowFlutter -> Hiss -> Dropout -> Tone -> Comp -> Width
+         * Note: Hiss before Tone matches VST - Tone EQ colors the tape hiss */
         v2_GS_Process(inst, left_buf, right_buf, chunk);
         v2_TapeSat_Process(inst, left_buf, right_buf, chunk);
         v2_WF_Process(inst, left_buf, right_buf, left_buf, right_buf, chunk, SAMPLE_RATE);
-        v2_Tone_Process(inst, left_buf, right_buf, chunk);
         v2_Hiss_Process(inst, left_buf, right_buf, chunk);
+        v2_Dropout_Process(inst, left_buf, right_buf, chunk);
+        v2_Tone_Process(inst, left_buf, right_buf, chunk);
         v2_Comp_Process(inst, left_buf, right_buf, chunk);
         v2_Width_Process(inst, left_buf, right_buf, chunk);
 
@@ -1025,7 +1467,10 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         v2_ApplyAgeSpeedModifiers(inst);
         v2_GS_SetParams(inst, inst->param_drive, inst->param_color);
     } else if (strcmp(key, "widen") == 0) {
-        inst->param_widen = (v > 0.5f) ? 1 : 0;
+        if (strcmp(val, "ON") == 0) inst->param_widen = 1;
+        else if (strcmp(val, "OFF") == 0) inst->param_widen = 0;
+        else inst->param_widen = (v > 0.5f) ? 1 : 0;
+        v2_ApplyAgeSpeedModifiers(inst);  /* Update stereo blend */
     } else if (strcmp(key, "state") == 0) {
         /* Restore all parameters from JSON state */
         float fval;
@@ -1103,7 +1548,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         if (idx < 0) idx = 0; if (idx > 2) idx = 2;
         return snprintf(buf, buf_len, "%s", options[idx]);
     }
-    if (strcmp(key, "widen") == 0) return snprintf(buf, buf_len, "%d", inst->param_widen);
+    if (strcmp(key, "widen") == 0) return snprintf(buf, buf_len, "%s", inst->param_widen ? "ON" : "OFF");
     if (strcmp(key, "name") == 0) return snprintf(buf, buf_len, "TAPESCAM");
     if (strcmp(key, "state") == 0) {
         /* Serialize all parameters to JSON for state save */
@@ -1139,17 +1584,17 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Chain params metadata for shadow parameter editor */
     if (strcmp(key, "chain_params") == 0) {
         const char *params_json = "["
-            "{\"key\":\"input\",\"name\":\"Input\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"drive\",\"name\":\"Drive\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"color\",\"name\":\"Color\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"wobble\",\"name\":\"Wobble\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"noise\",\"name\":\"Noise\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"age\",\"name\":\"Age\",\"type\":\"enum\",\"options\":[\"NEW\",\"USED\",\"WORN\"]},"
-            "{\"key\":\"speed\",\"name\":\"Speed\",\"type\":\"enum\",\"options\":[\"HIGH\",\"STD\",\"LOW\"]},"
-            "{\"key\":\"compression\",\"name\":\"Compression\",\"type\":\"enum\",\"options\":[\"OFF\",\"LITE\",\"HEAVY\"]},"
-            "{\"key\":\"widen\",\"name\":\"Widen\",\"type\":\"bool\"}"
+            "{\"key\":\"input\",\"name\":\"Input\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.7,\"step\":0.01},"
+            "{\"key\":\"drive\",\"name\":\"Drive\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.01},"
+            "{\"key\":\"color\",\"name\":\"Color\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.01},"
+            "{\"key\":\"wobble\",\"name\":\"Wobble\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.01},"
+            "{\"key\":\"noise\",\"name\":\"Noise\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0,\"step\":0.01},"
+            "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.5,\"step\":0.01},"
+            "{\"key\":\"output\",\"name\":\"Output\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":1,\"step\":0.01},"
+            "{\"key\":\"age\",\"name\":\"Age\",\"type\":\"enum\",\"options\":[\"NEW\",\"USED\",\"WORN\"],\"default\":\"NEW\"},"
+            "{\"key\":\"speed\",\"name\":\"Speed\",\"type\":\"enum\",\"options\":[\"HIGH\",\"STD\",\"LOW\"],\"default\":\"HIGH\"},"
+            "{\"key\":\"compression\",\"name\":\"Compression\",\"type\":\"enum\",\"options\":[\"OFF\",\"LITE\",\"HEAVY\"],\"default\":\"OFF\"},"
+            "{\"key\":\"widen\",\"name\":\"Widen\",\"type\":\"enum\",\"options\":[\"OFF\",\"ON\"],\"default\":\"ON\"}"
         "]";
         int len = strlen(params_json);
         if (len < buf_len) {
