@@ -90,47 +90,58 @@
               "key": "age",
               "label": "Age",
               "type": "enum",
-              "options": ["NEW", "USED", "WORN"],
+              "options": [
+                "NEW",
+                "USED",
+                "WORN"
+              ],
               "default": "NEW"
             },
             {
               "key": "speed",
               "label": "Speed",
               "type": "enum",
-              "options": ["HIGH", "STD", "LOW"],
+              "options": [
+                "HIGH",
+                "STD",
+                "LOW"
+              ],
               "default": "HIGH"
             },
             {
               "key": "compression",
               "label": "Comp",
               "type": "enum",
-              "options": ["OFF", "LITE", "HEAVY"],
+              "options": [
+                "OFF",
+                "LITE",
+                "HEAVY"
+              ],
               "default": "OFF"
             },
             {
               "key": "widen",
               "label": "Widen",
               "type": "enum",
-              "options": ["OFF", "ON"],
+              "options": [
+                "OFF",
+                "ON"
+              ],
               "default": "ON"
             }
           ],
-          "knobs": ["drive", "color", "wobble", "noise", "tone", "output", "age", "compression"]
+          "knobs": [
+            "drive",
+            "color",
+            "wobble",
+            "noise",
+            "tone",
+            "output",
+            "age",
+            "compression"
+          ]
         }
       }
-    },
-    "chain_params": [
-      {"key": "input", "name": "Input", "type": "float", "min": 0.0, "max": 1.0, "default": 0.7, "step": 0.01},
-      {"key": "drive", "name": "Drive", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01},
-      {"key": "color", "name": "Color", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01},
-      {"key": "wobble", "name": "Wobble", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01},
-      {"key": "noise", "name": "Noise", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01},
-      {"key": "tone", "name": "Tone", "type": "float", "min": 0.0, "max": 1.0, "default": 0.5, "step": 0.01},
-      {"key": "output", "name": "Output", "type": "float", "min": 0.0, "max": 1.0, "default": 1.0, "step": 0.01},
-      {"key": "age", "name": "Age", "type": "enum", "options": ["NEW", "USED", "WORN"], "default": "NEW"},
-      {"key": "speed", "name": "Speed", "type": "enum", "options": ["HIGH", "STD", "LOW"], "default": "HIGH"},
-      {"key": "compression", "name": "Comp", "type": "enum", "options": ["OFF", "LITE", "HEAVY"], "default": "OFF"},
-      {"key": "widen", "name": "Widen", "type": "enum", "options": ["OFF", "ON"], "default": "ON"}
-    ]
+    }
   }
 }
