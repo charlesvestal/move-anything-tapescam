@@ -61,6 +61,7 @@ ${CROSS_PREFIX}gcc -Ofast -shared -fPIC \
 # Copy files to dist (use cat to avoid ExtFS deallocation issues with Docker)
 echo "Packaging..."
 cat src/module.json > dist/tapescam/module.json
+[ -f src/help.json ] && cat src/help.json > dist/tapescam/help.json
 cat build/tapescam.so > dist/tapescam/tapescam.so
 chmod +x dist/tapescam/tapescam.so
 

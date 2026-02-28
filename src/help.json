@@ -1,0 +1,70 @@
+{
+  "title": "TAPESCAM",
+  "children": [
+    {
+      "title": "Overview",
+      "lines": [
+        "Tape saturation and",
+        "degradation effect.",
+        "",
+        "Analog tape emulation",
+        "with wobble, flutter,",
+        "noise, and tone",
+        "shaping.",
+        "",
+        "Three tape age modes",
+        "and configurable",
+        "tape speed."
+      ]
+    },
+    {
+      "title": "Controls",
+      "children": [
+        {
+          "title": "Knob Mapping",
+          "lines": [
+            "Knob 1: Drive",
+            " Distortion/clipping",
+            "",
+            "Knob 2: Color",
+            " Saturation character",
+            "",
+            "Knob 3: Wobble",
+            " Wow/flutter pitch",
+            " modulation",
+            "",
+            "Knob 4: Noise",
+            " Tape hiss amount",
+            "",
+            "Knob 5: Tone",
+            " Tilt EQ (dark/bright)",
+            "",
+            "Knob 6: Output",
+            " Output level"
+          ]
+        },
+        {
+          "title": "Tape Settings",
+          "lines": [
+            "Knob 7: Age",
+            " NEW: clean tape",
+            " USED: some wear",
+            " WORN: degraded",
+            "",
+            "Knob 8: Compression",
+            " OFF: no compression",
+            " LITE: gentle",
+            " HEAVY: aggressive",
+            "",
+            "Speed (via menu):",
+            " HIGH, STD, or LOW",
+            "",
+            "Widen (via menu):",
+            " Stereo widening",
+            " ON or OFF"
+          ]
+        }
+      ]
+    }
+  ]
+}
