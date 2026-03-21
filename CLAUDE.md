@@ -4,7 +4,7 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-TAPESCAM is an audio effect module for Move Anything that provides tape saturation and degradation effects.
+TAPESCAM is an audio effect module for Schwung that provides tape saturation and degradation effects.
 
 ## Architecture
 
@@ -12,8 +12,8 @@ TAPESCAM is an audio effect module for Move Anything that provides tape saturati
 src/
   dsp/
     tapescam.c          # Main DSP implementation
-    audio_fx_api_v1.h   # Audio FX API (from move-anything)
-    plugin_api_v1.h     # Plugin API types (from move-anything)
+    audio_fx_api_v1.h   # Audio FX API (from schwung)
+    plugin_api_v1.h     # Plugin API types (from schwung)
   module.json           # Module metadata
 ```
 
@@ -21,7 +21,7 @@ src/
 
 ### Audio FX API
 
-Implements Move Anything audio_fx_api_v1:
+Implements Schwung audio_fx_api_v1:
 - `on_load`: Initialize DSP state
 - `on_unload`: Cleanup
 - `process_block`: In-place stereo audio processing
@@ -39,7 +39,7 @@ Implements Move Anything audio_fx_api_v1:
 
 Module declares `"chainable": true` and `"component_type": "audio_fx"` in module.json.
 
-Installs to: `/data/UserData/move-anything/modules/chain/audio_fx/tapescam/`
+Installs to: `/data/UserData/schwung/modules/chain/audio_fx/tapescam/`
 
 ## Build Commands
 

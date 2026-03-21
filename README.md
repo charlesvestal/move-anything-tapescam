@@ -1,16 +1,16 @@
-# Move Everything TAPESCAM
+# Schwung TAPESCAM
 
-Tape saturation and degradation audio effect module for Move Everything.
+Tape saturation and degradation audio effect module for Schwung.
 
 ## Prerequisites
 
-- [Move Everything](https://github.com/charlesvestal/move-everything) installed on your Ableton Move
+- [Schwung](https://github.com/charlesvestal/schwung) installed on your Ableton Move
 
 ## Installation
 
 ### Via Module Store (Recommended)
 
-1. Launch Move Everything on your Move
+1. Launch Schwung on your Move
 2. Select **Module Store** from the main menu
 3. Navigate to **Audio FX** → **TAPESCAM**
 4. Select **Install**
@@ -42,7 +42,7 @@ Tape saturation and degradation audio effect module for Move Everything.
 ./scripts/install.sh
 ```
 
-The module will be installed to `/data/UserData/move-anything/modules/chain/audio_fx/tapescam/` on your Move.
+The module will be installed to `/data/UserData/schwung/modules/chain/audio_fx/tapescam/` on your Move.
 
 ## Usage
 
@@ -60,7 +60,7 @@ MIT License - see LICENSE file for details.
 
 ## AI Assistance Disclaimer
 
-This module is part of Move Everything and was developed with AI assistance, including Claude, Codex, and other AI assistants.
+This module is part of Schwung and was developed with AI assistance, including Claude, Codex, and other AI assistants.
 
 All architecture, implementation, and release decisions are reviewed by human maintainers.  
 AI-assisted content may still contain errors, so please validate functionality, security, and license compatibility before production use.

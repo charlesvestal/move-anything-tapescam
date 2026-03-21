@@ -6,7 +6,7 @@
 
 **Architecture:** The current tapescam.c applies output level INSIDE GainStage (before TapeSat), causing loudness that can't be attenuated. We need to restructure to apply output level AFTER all processing. Additionally, we need to add missing parameters (noise, age, speed, compression, widen) and their corresponding DSP modules (HissDrop, LoFiCompressor, Dropout).
 
-**Tech Stack:** C, Move Anything Audio FX API v2
+**Tech Stack:** C, Schwung Audio FX API v2
 
 ---
 
